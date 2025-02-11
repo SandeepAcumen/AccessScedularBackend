@@ -93,7 +93,7 @@ const migrateTable = async (pgClient, tableName, accessConn) => {
     }
 };
 
-app.post("/migrate", async (req, res) => {
+app.post("/api/migrate", async (req, res) => {
     const { host, database, user, password, port, accessDbPath } = req.body;
 
     if (!host || !database || !user || !password || !port || !accessDbPath) {
