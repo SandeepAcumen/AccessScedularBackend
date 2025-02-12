@@ -1,9 +1,18 @@
 const express = require("express");
 const odbc = require("odbc");
 const { Client } = require("pg");
-
 const app = express();
 const PORT = 3600;
+
+const bodyParser = require("body-parser");
+const helmet = require("helmet");
+const compression = require("compression");
+const cors = require("cors");
+
+app.use(cors());
+app.use(helmet());
+app.use(compression());
+app.use(bodyParser.json());
 
 // Microsoft Access Database Path
 const ACCESS_DB_PATH = "C:\\Users\\Admin\\Documents\\Cookie Orders.accdb";
