@@ -1,124 +1,137 @@
-require("dotenv").config();
 const express = require("express");
-const bodyParser = require("body-parser");
-const helmet = require("helmet");
-const compression = require("compression");
-const cors = require("cors");
-const { Client } = require("pg");
 const odbc = require("odbc");
-const fs = require("fs");
-const path = require("path");
+const { Client } = require("pg");
 
 const app = express();
-const port = process.env.APP_PORT || 3600;
+const PORT = 3600;
 
-const loadMDBReader = async () => {
-    const { default: MDBReader } = await import("mdb-reader");
-    return MDBReader;
-};
+// Microsoft Access Database Path
+const ACCESS_DB_PATH = "C:\\Users\\Admin\\Documents\\Cookie Orders.accdb";
 
-app.use(cors());
-app.use(helmet());
-app.use(compression());
-app.use(bodyParser.json());
+// Access Connection String
+const accessConnectionString = `DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=${ACCESS_DB_PATH};`;
 
-const connectAccess = async (accessDbPath) => {
-    try {
-        if (process.env.DSN_NAME) {
-            return await odbc.connect(`DSN=${process.env.DSN_NAME}`);
-        } else {
-            const dbPath = path.resolve(accessDbPath);
-            if (!fs.existsSync(dbPath)) throw new Error("Access file not found");
+// PostgreSQL Connection Config
+const pgClient = new Client({
+    user: "postgres",
+    host: "34.46.166.186",
+    database: "testing3",
+    password: "Acumen#123",
+    port: 5432, // Default PostgreSQL port
+});
 
-            // Dynamically import MDBReader
-            const MDBReader = await loadMDBReader();
-            return new MDBReader(dbPath);
-        }
-    } catch (err) {
-        console.error("❌ Access Connection Error:", err);
-        return null;
-    }
-};
-
-// Get All Tables from Access
-const getAccessTables = async (accessConn) => {
-    try {
-        if (process.env.DSN_NAME) {
-            const result = await accessConn.query("SELECT name FROM MSysObjects WHERE type=1 AND name NOT LIKE 'MSys%';");
-            return result.map(row => row.name);
-        } else {
-            return accessConn.listTables();
-        }
-    } catch (err) {
-        console.error("❌ Error fetching tables:", err);
-        return [];
-    }
-};
-
-// Convert Access Data Types to PostgreSQL
-const mapDataType = (type) => {
-    if (typeof type === "number") return "INTEGER";
-    if (typeof type === "string") return "TEXT";
-    if (type instanceof Date) return "TIMESTAMP";
-    return "TEXT";
-};
-
-// Create Table in PostgreSQL
-const createTable = async (pgClient, tableName, columns) => {
-    try {
-        const columnDefs = columns.map(({ name, type }) => `"${name}" ${mapDataType(type)}`).join(", ");
-        const sql = `CREATE TABLE IF NOT EXISTS "${tableName}" (${columnDefs}, PRIMARY KEY("${columns[0].name}"));`;
-        await pgClient.query(sql);
-        console.log(`✅ Table ensured: ${tableName}`);
-    } catch (err) {
-        // console.error(`❌ Error creating table ${tableName}:", err);
-        console.log(err);
-
-    }
-};
-
-// Migrate a Single Table
-const migrateTable = async (pgClient, tableName, accessConn) => {
-    try {
-        console.log(`🚀 Syncing table: ${tableName}`);
-        const data = process.env.DSN_NAME ? await accessConn.query(`SELECT * FROM ${tableName} ORDER BY 1 ASC`) : accessConn.getTable(tableName);
-        if (!data.length) {
-            console.log(`⚠️ Warning: ${tableName} is empty.Skipping...`);
-            return;
-        }
-        const columns = Object.keys(data[0]).map(name => ({ name, type: data[0][name] }));
-        await createTable(pgClient, tableName, columns);
-    } catch (err) {
-        console.error(`❌ Error migrating ${tableName}: `, err);
-    }
-};
-
-app.post("/api/migrate", async (req, res) => {
-    const { host, database, user, password, port, accessDbPath } = req.body;
-
-    if (!host || !database || !user || !password || !port || !accessDbPath) {
-        return res.status(400).json({ error: "Missing PostgreSQL credentials in request body" });
-    }
-
-    const pgClient = new Client({ host, database, user, password, port });
-
+// Connect to PostgreSQL
+async function connectPostgres() {
     try {
         await pgClient.connect();
         console.log("✅ Connected to PostgreSQL");
-    } catch (err) {
-        console.error("❌ PostgreSQL Connection Error:", err);
-        return res.status(500).json({ error: "PostgreSQL connection failed" });
+    } catch (error) {
+        console.error("❌ PostgreSQL Connection Error:", error);
+        process.exit(1);
     }
+}
 
-    const accessConn = await connectAccess(accessDbPath);
-    if (!accessConn) return res.status(500).json({ error: "Access connection failed" });
+// Connect to Microsoft Access
+async function connectAccess() {
+    console.log("🔗 Connecting to Access Database...");
+    try {
+        const accessDb = await odbc.connect(accessConnectionString);
+        console.log("✅ Connected to Access Database");
 
-    const tables = await getAccessTables(accessConn);
-    for (const table of tables) await migrateTable(pgClient, table, accessConn);
+        const tablesResult = await accessDb.tables(null, null, null, "TABLE");
+        const tables = tablesResult.map(row => row.TABLE_NAME);
+        console.log("📂 Tables Found:", tables);
 
-    res.json({ message: "🎉 Migration Completed Successfully!" });
+        for (const table of tables) {
+            await migrateTable(accessDb, table);
+        }
+
+        await accessDb.close();
+        console.log("🔌 Disconnected from Access Database");
+    } catch (error) {
+        console.error("❌ Access Connection Error:", error);
+    }
+}
+
+// Fetch Data from Access Table
+async function fetchDataFromAccess(accessDb, tableName) {
+    console.log(`📥 Fetching data from ${tableName}...`);
+    try {
+        const result = await accessDb.query(`SELECT * FROM ${tableName}`);
+        console.log(`📊 Found ${result.length} records in ${tableName}`);
+        return result;
+    } catch (error) {
+        console.error(`❌ Error fetching data from ${tableName}:`, error);
+        return [];
+    }
+}
+
+// Ensure Table Exists in PostgreSQL
+async function ensurePostgresTable(tableName, sampleRecord) {
+    const columns = Object.keys(sampleRecord)
+        .map(col => `"${col.replace(/\s/g, "_")}" TEXT`)
+        .join(", ");
+
+    const primaryKey = `"${Object.keys(sampleRecord)[0].replace(/\s/g, "_")}"`; // Assume first column is PK
+
+    const createTableQuery = `
+        CREATE TABLE IF NOT EXISTS "${tableName}" (${columns}, PRIMARY KEY (${primaryKey}));
+    `;
+
+    try {
+        await pgClient.query(createTableQuery);
+        console.log(`✅ Table "${tableName}" ensured in PostgreSQL`);
+    } catch (error) {
+        console.error(`❌ Error creating table ${tableName}:`, error);
+    }
+}
+
+// Insert Data into PostgreSQL (Handles Duplicates)
+async function insertDataIntoPostgres(tableName, records) {
+    if (records.length === 0) return;
+
+    const columns = Object.keys(records[0]).map(col => `"${col.replace(/\s/g, "_")}"`).join(", ");
+    const primaryKey = `"${Object.keys(records[0])[0].replace(/\s/g, "_")}"`; // Assume first column is PK
+
+    try {
+        for (const record of records) {
+            const values = Object.values(record)
+                .map(value => (value ? `'${value.toString().replace(/'/g, "''")}'` : "NULL"))
+                .join(", ");
+
+            const insertQuery = `
+                INSERT INTO "${tableName}" (${columns}) VALUES (${values})
+                ON CONFLICT (${primaryKey}) DO UPDATE 
+                SET ${columns.split(", ").map(col => `${col} = EXCLUDED.${col}`).join(", ")}
+            `;
+
+            await pgClient.query(insertQuery);
+        }
+
+        console.log(`✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
+    } catch (error) {
+        console.error(`❌ Error inserting data into ${tableName}:`, error);
+    }
+}
+
+// Migrate Table from Access to PostgreSQL
+async function migrateTable(accessDb, tableName) {
+    const records = await fetchDataFromAccess(accessDb, tableName);
+    if (records.length > 0) {
+        await ensurePostgresTable(tableName, records[0]);
+        await insertDataIntoPostgres(tableName, records);
+    }
+}
+
+// API Endpoint to Trigger Migration
+app.get("/migrate", async (req, res) => {
+    console.log("📢 Received migration request...");
+    await connectPostgres();
+    await connectAccess();
+    res.send("✅ Data Migration Completed!");
 });
 
-app.listen(port, () => {
-    console.log(`Listening on: http://localhost:${port}`);
+// Start Server
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
