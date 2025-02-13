@@ -3,6 +3,7 @@ const odbc = require("odbc");
 const { Client } = require("pg");
 const app = express();
 const PORT = 3600;
+
 const bodyParser = require("body-parser");
 const helmet = require("helmet");
 const compression = require("compression");
@@ -13,6 +14,7 @@ app.use(helmet());
 app.use(compression());
 app.use(bodyParser.json());
 
+// Connect to PostgreSQL
 async function connectPostgres(pgConfig) {
     const pgClient = new Client(pgConfig);
     try {
@@ -26,26 +28,16 @@ async function connectPostgres(pgConfig) {
 }
 
 // Connect to Microsoft Access
-async function connectAccess(accessDbPath, pgClient) {
+async function connectAccess(accessDbPath) {
     console.log("🔗 Connecting to Access Database...");
     try {
         const accessConnectionString = `DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=${accessDbPath};`;
         const accessDb = await odbc.connect(accessConnectionString);
         console.log("✅ Connected to Access Database");
-
-        const tablesResult = await accessDb.tables(null, null, null, "TABLE");
-        const tables = tablesResult.map(row => row.TABLE_NAME);
-        console.log("📂 Tables Found:", tables);
-
-        for (const table of tables) {
-            await migrateTable(accessDb, pgClient, table);
-        }
-        await accessDb.close();
-        console.log("🔌 Disconnected from Access Database");
-        return true
+        return accessDb;
     } catch (error) {
         console.error("❌ Access Connection Error:", error);
-        return false
+        return null;
     }
 }
 
@@ -67,13 +59,8 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
     const columns = Object.keys(sampleRecord)
         .map(col => `"${col.replace(/\s/g, "_")}" TEXT`)
         .join(", ");
-
-    const primaryKey = `"${Object.keys(sampleRecord)[0].replace(/\s/g, "_")}"`; // Assume first column is PK
-
-    const createTableQuery = `
-        CREATE TABLE IF NOT EXISTS "${tableName}" (${columns}, PRIMARY KEY (${primaryKey}));
-    `;
-
+    const primaryKey = `"${Object.keys(sampleRecord)[0].replace(/\s/g, "_")}"`;
+    const createTableQuery = `CREATE TABLE IF NOT EXISTS "${tableName}" (${columns}, PRIMARY KEY (${primaryKey}));`;
     try {
         await pgClient.query(createTableQuery);
         console.log(`✅ Table "${tableName}" ensured in PostgreSQL`);
@@ -82,28 +69,21 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
     }
 }
 
-// Insert Data into PostgreSQL (Handles Duplicates)
+// Insert Data into PostgreSQL
 async function insertDataIntoPostgres(pgClient, tableName, records) {
     if (records.length === 0) return;
-
     const columns = Object.keys(records[0]).map(col => `"${col.replace(/\s/g, "_")}"`).join(", ");
-    const primaryKey = `"${Object.keys(records[0])[0].replace(/\s/g, "_")}"`; // Assume first column is PK
-
+    const primaryKey = `"${Object.keys(records[0])[0].replace(/\s/g, "_")}"`;
     try {
         for (const record of records) {
             const values = Object.values(record)
                 .map(value => (value ? `'${value.toString().replace(/'/g, "''")}'` : "NULL"))
                 .join(", ");
-
-            const insertQuery = `
-                INSERT INTO "${tableName}" (${columns}) VALUES (${values})
+            const insertQuery = `INSERT INTO "${tableName}" (${columns}) VALUES (${values})
                 ON CONFLICT (${primaryKey}) DO UPDATE 
-                SET ${columns.split(", ").map(col => `${col} = EXCLUDED.${col}`).join(", ")}
-            `;
-
+                SET ${columns.split(", ").map(col => `${col} = EXCLUDED.${col}`).join(", ")}`;
             await pgClient.query(insertQuery);
         }
-
         console.log(`✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
     } catch (error) {
         console.error(`❌ Error inserting data into ${tableName}:`, error);
@@ -123,26 +103,36 @@ async function migrateTable(accessDb, pgClient, tableName) {
 app.post("/migrate", async (req, res) => {
     try {
         const { accessDbPath, user, host, database, password, port = 5432 } = req.body;
-        if (!accessDbPath) {
-            return res.status(400).send("❌ Missing required parameters: accessDbPath and pgConfig");
-        }
-        const data = {
+        const pgConfig = {
             user, host, database, password, port
         }
+        if (!accessDbPath || !pgConfig) {
+            return res.status(400).send("❌ Missing required parameters: accessDbPath and pgConfig");
+        }
+
         console.log("📢 Received migration request...");
-        const pgClient = await connectPostgres(data);
+        const pgClient = await connectPostgres(pgConfig);
         if (!pgClient) return res.status(500).send("❌ Failed to connect to PostgreSQL");
 
-        const accessDb = await connectAccess(accessDbPath, pgClient);
+        const accessDb = await connectAccess(accessDbPath);
         if (!accessDb) return res.status(500).send("❌ Failed to connect to Access Database");
+
+        const tablesResult = await accessDb.tables(null, null, null, "TABLE");
+        const tables = tablesResult.map(row => row.TABLE_NAME);
+        console.log("📂 Tables Found:", tables);
+
+        for (const table of tables) {
+            await migrateTable(accessDb, pgClient, table);
+        }
+
+        await accessDb.close();
+        await pgClient.end();
         console.log("✅ Data Migration Completed!");
         return res.status(200).json({ message: "Data Migration Completed!" });
-
     } catch (error) {
         console.log(error);
         return res.status(500).json({ message: "Something went wrong", error });
     }
-
 });
 
 // Start Server
