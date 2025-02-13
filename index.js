@@ -100,7 +100,7 @@ async function migrateTable(accessDb, pgClient, tableName) {
 }
 
 // API Endpoint to Trigger Migration
-app.post("/migrate", async (req, res) => {
+app.post("/api/migrate", async (req, res) => {
     try {
         const { accessDbPath, user, host, database, password, port = 5432 } = req.body;
         const pgConfig = {
