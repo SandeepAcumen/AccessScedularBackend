@@ -15,35 +15,50 @@ app.use(compression());
 app.use(bodyParser.json());
 
 // Microsoft Access Database Path
-const ACCESS_DB_PATH = "C:\\Users\\Admin\\Documents\\Cookie Orders.accdb";
+// const ACCESS_DB_PATH = "C:\\Users\\Admin\\Documents\\Cookie Orders.accdb";
 
-// Access Connection String
-const accessConnectionString = `DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=${ACCESS_DB_PATH};`;
+// // Access Connection String
+// const accessConnectionString = `DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=${ACCESS_DB_PATH};`;
 
 // PostgreSQL Connection Config
-const pgClient = new Client({
-    user: "postgres",
-    host: "34.46.166.186",
-    database: "testing3",
-    password: "Acumen#123",
-    port: 5432, // Default PostgreSQL port
-});
+// const pgClient = new Client({
+//     user: "postgres",
+//     host: "34.46.166.186",
+//     database: "testing3",
+//     password: "Acumen#123",
+//     port: 5432, // Default PostgreSQL port
+// });
 
 // Connect to PostgreSQL
-async function connectPostgres() {
+// async function connectPostgres() {
+//     try {
+//         await pgClient.connect();
+//         console.log("✅ Connected to PostgreSQL");
+//     } catch (error) {
+//         console.error("❌ PostgreSQL Connection Error:", error);
+//         process.exit(1);
+//     }
+// }
+
+
+async function connectPostgres(pgConfig) {
+    const pgClient = new Client(pgConfig);
     try {
         await pgClient.connect();
         console.log("✅ Connected to PostgreSQL");
+        return pgClient;
     } catch (error) {
         console.error("❌ PostgreSQL Connection Error:", error);
-        process.exit(1);
+        return null;
     }
 }
 
 // Connect to Microsoft Access
-async function connectAccess() {
+async function connectAccess(accessDbPath) {
     console.log("🔗 Connecting to Access Database...");
     try {
+        // const ACCESS_DB_PATH = "C:\\Users\\Admin\\Documents\\Cookie Orders.accdb";
+        const accessConnectionString = `DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=${accessDbPath};`;
         const accessDb = await odbc.connect(accessConnectionString);
         console.log("✅ Connected to Access Database");
 
@@ -57,8 +72,10 @@ async function connectAccess() {
 
         await accessDb.close();
         console.log("🔌 Disconnected from Access Database");
+        return true
     } catch (error) {
         console.error("❌ Access Connection Error:", error);
+        return false
     }
 }
 
@@ -76,7 +93,7 @@ async function fetchDataFromAccess(accessDb, tableName) {
 }
 
 // Ensure Table Exists in PostgreSQL
-async function ensurePostgresTable(tableName, sampleRecord) {
+async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
     const columns = Object.keys(sampleRecord)
         .map(col => `"${col.replace(/\s/g, "_")}" TEXT`)
         .join(", ");
@@ -96,7 +113,7 @@ async function ensurePostgresTable(tableName, sampleRecord) {
 }
 
 // Insert Data into PostgreSQL (Handles Duplicates)
-async function insertDataIntoPostgres(tableName, records) {
+async function insertDataIntoPostgres(pgClient, tableName, records) {
     if (records.length === 0) return;
 
     const columns = Object.keys(records[0]).map(col => `"${col.replace(/\s/g, "_")}"`).join(", ");
@@ -124,20 +141,38 @@ async function insertDataIntoPostgres(tableName, records) {
 }
 
 // Migrate Table from Access to PostgreSQL
-async function migrateTable(accessDb, tableName) {
+async function migrateTable(accessDb, pgClient, tableName) {
     const records = await fetchDataFromAccess(accessDb, tableName);
     if (records.length > 0) {
-        await ensurePostgresTable(tableName, records[0]);
-        await insertDataIntoPostgres(tableName, records);
+        await ensurePostgresTable(pgClient, tableName, records[0]);
+        await insertDataIntoPostgres(pgClient, tableName, records);
     }
 }
 
 // API Endpoint to Trigger Migration
-app.get("/migrate", async (req, res) => {
-    console.log("📢 Received migration request...");
-    await connectPostgres();
-    await connectAccess();
-    res.send("✅ Data Migration Completed!");
+app.post("/migrate", async (req, res) => {
+    try {
+        const { accessDbPath, user, host, database, password, port = 5432 } = req.body;
+        if (!accessDbPath || !pgConfig) {
+            return res.status(400).send("❌ Missing required parameters: accessDbPath and pgConfig");
+        }
+        const data = {
+            user, host, database, password, port
+        }
+        console.log("📢 Received migration request...");
+        const pgClient = await connectPostgres(data);
+        if (!pgClient) return res.status(500).send("❌ Failed to connect to PostgreSQL");
+
+        const accessDb = await connectAccess(accessDbPath);
+        if (!accessDb) return res.status(500).send("❌ Failed to connect to Access Database");
+        console.log("✅ Data Migration Completed!");
+        return res.status(200).json();
+
+    } catch (error) {
+        console.log(error);
+        return res.status(500).json({ message: "Something went wrong", error });
+    }
+
 });
 
 // Start Server
