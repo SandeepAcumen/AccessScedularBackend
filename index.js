@@ -2,7 +2,7 @@ const express = require("express");
 const odbc = require("odbc");
 const { Client } = require("pg");
 const app = express();
-const PORT = 3000;
+const PORT = process.env.APP_PORT || 3000;
 
 const bodyParser = require("body-parser");
 const helmet = require("helmet");
@@ -107,15 +107,15 @@ app.post("/api/migrate", async (req, res) => {
             user, host, database, password, port
         }
         if (!accessDbPath || !pgConfig) {
-            return res.status(400).send("❌ Missing required parameters: accessDbPath and pgConfig");
+            return res.status(400).json({ message: "❌ Missing required parameters: accessDbPath and database credentials." });
         }
 
         console.log("📢 Received migration request...");
         const pgClient = await connectPostgres(pgConfig);
-        if (!pgClient) return res.status(500).send("❌ Failed to connect to PostgreSQL");
+        if (!pgClient) return res.status(500).json({ message: "❌ Failed to connect to PostgreSQL" });
 
         const accessDb = await connectAccess(accessDbPath);
-        if (!accessDb) return res.status(500).send("❌ Failed to connect to Access Database");
+        if (!accessDb)  return res.status(500).json({ message: "❌ Failed to connect to Access Database" });
 
         const tablesResult = await accessDb.tables(null, null, null, "TABLE");
         const tables = tablesResult.map(row => row.TABLE_NAME);
