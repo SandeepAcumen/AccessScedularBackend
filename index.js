@@ -2,7 +2,7 @@ const express = require("express");
 const odbc = require("odbc");
 const { Client } = require("pg");
 const app = express();
-const PORT = 3600;
+const PORT = 3000;
 
 const bodyParser = require("body-parser");
 const helmet = require("helmet");
