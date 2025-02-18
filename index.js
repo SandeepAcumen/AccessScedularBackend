@@ -135,6 +135,17 @@ app.post("/api/migrate", async (req, res) => {
     }
 });
 
+app.use(express.static('../microsoft-access-migrate/build'));
+
+
+app.get("/", (req, res) => {
+    return res.status(200).json({ message: "Server working!" });
+});
+
+app.get("*", function (req, res) {
+    return res.status(404).json({ message: "Invalid url!" });
+});
+
 // Start Server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
