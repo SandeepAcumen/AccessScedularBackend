@@ -99,6 +99,8 @@ async function migrateTable(accessDb, pgClient, tableName) {
     }
 }
 
+app.use(express.static('../AccessFront/build'));
+
 // API Endpoint to Trigger Migration
 app.post("/api/migrate", async (req, res) => {
     try {
@@ -134,8 +136,6 @@ app.post("/api/migrate", async (req, res) => {
         return res.status(500).json({ message: "Something went wrong", error });
     }
 });
-
-app.use(express.static('../AccessFront/build'));
 
 
 app.get("/", (req, res) => {
