@@ -2,7 +2,7 @@ const express = require("express");
 const odbc = require("odbc");
 const { Client } = require("pg");
 const app = express();
-const PORT = process.env.APP_PORT || 3600;
+const PORT = process.env.APP_PORT || 3000;
 
 const bodyParser = require("body-parser");
 const helmet = require("helmet");
@@ -135,7 +135,7 @@ app.post("/api/migrate", async (req, res) => {
     }
 });
 
-app.use(express.static('../microsoft-access-migrate/build'));
+app.use(express.static('../AccessFront/build'));
 
 
 app.get("/", (req, res) => {
