@@ -62,11 +62,17 @@ async function fetchDataFromAccess(accessDb, tableName) {
     }
 }
 
+// Normalize column names (replace spaces and special characters)
+function normalizeColumnName(column) {
+    return column.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "");
+}
+
 // Ensure Table Exists in PostgreSQL
 async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
-    const columns = Object.keys(sampleRecord).map(col => `"${col.replace(/\s/g, "_")}" TEXT`).join(", ");
-    const primaryKey = `"${Object.keys(sampleRecord)[0].replace(/\s/g, "_")}"`;
+    const columns = Object.keys(sampleRecord).map(col => `"${normalizeColumnName(col)}" TEXT`).join(", ");
+    const primaryKey = `"${normalizeColumnName(Object.keys(sampleRecord)[0])}"`;
     const createTableQuery = `CREATE TABLE IF NOT EXISTS "${tableName}" (${columns}, PRIMARY KEY (${primaryKey}));`;
+
     try {
         await pgClient.query(createTableQuery);
         console.log(`✅ Table "${tableName}" ensured in PostgreSQL`);
@@ -78,8 +84,8 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
 // Delete records from PostgreSQL if they don't exist in Access
 async function deleteMissingRecords(pgClient, tableName, accessRecords) {
     if (accessRecords.length === 0) return;
-    
-    const primaryKey = `"${Object.keys(accessRecords[0])[0].replace(/\s/g, "_")}"`;
+
+    const primaryKey = `"${normalizeColumnName(Object.keys(accessRecords[0])[0])}"`;
     const accessIds = accessRecords.map(record => `'${record[Object.keys(record)[0]].toString().replace(/'/g, "''")}'`).join(", ");
 
     try {
@@ -91,11 +97,11 @@ async function deleteMissingRecords(pgClient, tableName, accessRecords) {
     }
 }
 
-// Insert Data into PostgreSQL
+// Insert or Update Data into PostgreSQL
 async function insertDataIntoPostgres(pgClient, tableName, records) {
     if (records.length === 0) return;
-    const columns = Object.keys(records[0]).map(col => `"${col.replace(/\s/g, "_")}"`).join(", ");
-    const primaryKey = `"${Object.keys(records[0])[0].replace(/\s/g, "_")}"`;
+    const columns = Object.keys(records[0]).map(col => `"${normalizeColumnName(col)}"`).join(", ");
+    const primaryKey = `"${normalizeColumnName(Object.keys(records[0])[0])}"`;
 
     try {
         for (const record of records) {
@@ -148,13 +154,12 @@ app.post("/api/migrate", async (req, res) => {
         await accessDb.close();
         await pgClient.end();
 
-        // Start scheduler after migration
         if (!schedulerRunning) {
             schedulerRunning = true;
             scheduleMigration(accessDbPath, pgConfig);
         }
 
-        return res.status(200).json({ message: "Data Migration Completed!" });
+        return res.status(200).json({ message: "✅ Data Migration Completed!" });
     } catch (error) {
         console.error("❌ Migration Error:", error);
         return res.status(500).json({ message: "Something went wrong", error });
@@ -165,7 +170,6 @@ app.post("/api/migrate", async (req, res) => {
 let schedulerRunning = false;
 async function scheduleMigration(accessDbPath, pgConfig) {
     cron.schedule("*/5 * * * *", async () => {
-
         console.log("⏳ Running scheduled migration...");
 
         const pgClient = await connectPostgres(pgConfig);
@@ -191,9 +195,9 @@ async function scheduleMigration(accessDbPath, pgConfig) {
             await pgClient.end();
         }
     });
+
     console.log("🔄 Migration Scheduler Started: Running every 5 minutes...");
 }
-
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
