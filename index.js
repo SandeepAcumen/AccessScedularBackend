@@ -190,7 +190,7 @@ app.post("/api/migrate", async (req, res) => {
             schedulerRunning = true;
             scheduleMigration(accessDbPath, pgConfig);
         }
-        migrationStatus = { status: "idle", message: "" };
+
         return res.status(200).json({ message: "✅ Data Migration Completed!", });
     } catch (error) {
         console.error("❌ Migration Error:", error);
@@ -202,6 +202,7 @@ app.post("/api/migrate", async (req, res) => {
 async function scheduleMigration(accessDbPath, pgConfig) {
     cron.schedule("*/1 * * * *", async () => {
         console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
+        io.emit('updated-status', `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
 
         const pgClient = await connectPostgres(pgConfig);
         if (!pgClient) return;
