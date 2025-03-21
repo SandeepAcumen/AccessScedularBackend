@@ -23,6 +23,13 @@ const io = new Server(server, {
     },
 });
 
+// Middleware
+app.use(cors());
+app.use(helmet());
+app.use(compression());
+app.use(bodyParser.json());
+
+
 let users = {};
 
 io.on('connection', (socket) => {
@@ -42,11 +49,6 @@ function broadcastToAll(event, data) {
     }
 }
 
-// Middleware
-app.use(cors());
-app.use(helmet());
-app.use(compression());
-app.use(bodyParser.json());
 
 // Serve Frontend
 app.use(express.static(path.join(__dirname, "../microsoft-access-migrate/build")));
