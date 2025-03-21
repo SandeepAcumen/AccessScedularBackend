@@ -12,34 +12,35 @@ const { Server } = require("socket.io");
 const app = express();
 const PORT = process.env.APP_PORT || 3600;
 let schedulerRunning = false;
-const http = require("http");
-const server = http.createServer(app); // Create HTTP Server
+
+app.set('port', PORT);
+
+const server = require("http").createServer(app);
 const io = new Server(server, {
+    path: '/socket.io',
     cors: {
-        origin: '*',
+        origin: "*",
     },
 });
 
-
-let users = {}; // Object to store users by socket ID
+let users = {};
 
 io.on('connection', (socket) => {
-    console.log('A user connected', socket.id);
-
-    // Handle user joining
-    socket.on('connected', (data) => {
-        users[socket.id] = data.userName; // Store user with socket ID
-        console.log(users, "connected users");
-        io.emit('update-user-list', Object.values(users));
+    console.log(`⚡: ${socket.id} user started!`);
+    socket.on('connected', function (userId) {
+        console.log('user connected', userId);
+        users[userId] = socket.id
     });
-
-    // Handle user disconnecting
-    socket.on('disconnect', () => {
-        console.log('User disconnected', socket.id);
-        io.emit('update-user-list', Object.values(users)); // Send updated list
+    socket.on('disconnect', function () {
+        console.log('user ended');
     });
-});
+})
 
+function broadcastToAll(event, data) {
+    for (let userId of Object.keys(users)) {
+        io.to(users[userId]).emit(event, data);
+    }
+}
 
 // Middleware
 app.use(cors());
