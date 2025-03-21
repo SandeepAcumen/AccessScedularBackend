@@ -141,8 +141,8 @@ async function insertDataIntoPostgres(pgClient, tableName, records) {
                 SET ${columns.split(", ").map(col => `${col} = EXCLUDED.${col}`).join(", ")}`;
             await pgClient.query(insertQuery);
         }
+        io.emit('updated-status', `✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
         console.log(`✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
-        migrationStatus = { status: "in_progress", message: `✅ Successfully inserted/updated ${records.length} records into ${tableName}` };
         //add socket
     } catch (error) {
         console.error(`❌ Error inserting data into ${tableName}:`, error);
@@ -200,7 +200,7 @@ app.post("/api/migrate", async (req, res) => {
 
 // Scheduler
 async function scheduleMigration(accessDbPath, pgConfig) {
-    cron.schedule("*/5 * * * *", async () => {
+    cron.schedule("*/1 * * * *", async () => {
         console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
 
         const pgClient = await connectPostgres(pgConfig);
@@ -232,6 +232,6 @@ app.get("/api/migration-status", (req, res) => {
     return res.json(migrationStatus);
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
