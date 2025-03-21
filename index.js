@@ -8,10 +8,38 @@ const compression = require("compression");
 const cors = require("cors");
 const path = require("path");
 const moment = require("moment");
-
+const { Server } = require("socket.io");
 const app = express();
-const PORT = process.env.APP_PORT || 3000;
+const PORT = process.env.APP_PORT || 3600;
 let schedulerRunning = false;
+const http = require("http");
+const server = http.createServer(app); // Create HTTP Server
+const io = new Server(server, {
+    cors: {
+        origin: '*',
+    },
+});
+
+
+let users = {}; // Object to store users by socket ID
+
+io.on('connection', (socket) => {
+    console.log('A user connected', socket.id);
+
+    // Handle user joining
+    socket.on('connected', (data) => {
+        users[socket.id] = data.userName; // Store user with socket ID
+        console.log(users, "connected users");
+        io.emit('update-user-list', Object.values(users));
+    });
+
+    // Handle user disconnecting
+    socket.on('disconnect', () => {
+        console.log('User disconnected', socket.id);
+        io.emit('update-user-list', Object.values(users)); // Send updated list
+    });
+});
+
 
 // Middleware
 app.use(cors());
@@ -26,12 +54,15 @@ app.get("*", (req, res) => {
     res.sendFile(path.join(__dirname, "../microsoft-access-migrate/build", "index.html"));
 });
 
+
 // PostgreSQL Connection
 async function connectPostgres(pgConfig) {
     const pgClient = new Client(pgConfig);
     try {
         await pgClient.connect();
         console.log("✅ Connected to PostgreSQL");
+        io.emit('updated-status', "Connected to PostgreSQL");
+        //add socket
         return pgClient;
     } catch (error) {
         console.error("❌ PostgreSQL Connection Error:", error);
@@ -45,6 +76,9 @@ async function connectAccess(accessDbPath) {
         const accessConnectionString = `DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=${accessDbPath};`;
         const accessDb = await odbc.connect(accessConnectionString);
         console.log("✅ Connected to Access Database");
+        io.emit('updated-status', "Connected to Access Database");
+
+        //add socket
         return accessDb;
     } catch (error) {
         console.error("❌ Access Connection Error:", error);
@@ -57,9 +91,13 @@ async function fetchDataFromAccess(accessDb, tableName) {
     try {
         const result = await accessDb.query(`SELECT * FROM ${tableName}`);
         console.log(`📊 Found ${result.length} records in ${tableName}`);
+        io.emit('updated-status', `📊 Found ${result.length} records in ${tableName}`);
+        //add socket
+
         return result;
     } catch (error) {
         console.error(`❌ Error fetching data from ${tableName}:`, error);
+        //add socket
         return [];
     }
 }
@@ -78,8 +116,11 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
     try {
         await pgClient.query(createTableQuery);
         console.log(`✅ Table "${tableName}" ensured in PostgreSQL`);
+        io.emit('updated-status', `✅ Table "${tableName}" ensured in PostgreSQL`);
+        //add socket
     } catch (error) {
         console.error(`❌ Error creating table ${tableName}:`, error);
+        //add socket
     }
 }
 
@@ -98,8 +139,11 @@ async function insertDataIntoPostgres(pgClient, tableName, records) {
             await pgClient.query(insertQuery);
         }
         console.log(`✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
+        migrationStatus = { status: "in_progress", message: `✅ Successfully inserted/updated ${records.length} records into ${tableName}` };
+        //add socket
     } catch (error) {
         console.error(`❌ Error inserting data into ${tableName}:`, error);
+        //add socket
     }
 }
 
@@ -143,8 +187,8 @@ app.post("/api/migrate", async (req, res) => {
             schedulerRunning = true;
             scheduleMigration(accessDbPath, pgConfig);
         }
-
-        return res.status(200).json({ message: "✅ Data Migration Completed!" });
+        migrationStatus = { status: "idle", message: "" };
+        return res.status(200).json({ message: "✅ Data Migration Completed!", });
     } catch (error) {
         console.error("❌ Migration Error:", error);
         return res.status(500).json({ message: "Something went wrong", error });
@@ -178,6 +222,12 @@ async function scheduleMigration(accessDbPath, pgConfig) {
 
     console.log("🔄 Migration Scheduler Started: Running every 5 minutes...");
 }
+
+app.get("/api/migration-status", (req, res) => {
+    console.log(migrationStatus, "migrationStatus");
+
+    return res.json(migrationStatus);
+});
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
