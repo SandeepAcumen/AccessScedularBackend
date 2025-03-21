@@ -7,9 +7,11 @@ const helmet = require("helmet");
 const compression = require("compression");
 const cors = require("cors");
 const path = require("path");
+const moment = require("moment");
 
 const app = express();
 const PORT = process.env.APP_PORT || 3000;
+let schedulerRunning = false;
 
 // Middleware
 app.use(cors());
@@ -62,7 +64,7 @@ async function fetchDataFromAccess(accessDb, tableName) {
     }
 }
 
-// Normalize column names (replace spaces and special characters)
+// Normalize column names
 function normalizeColumnName(column) {
     return column.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "");
 }
@@ -78,22 +80,6 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
         console.log(`✅ Table "${tableName}" ensured in PostgreSQL`);
     } catch (error) {
         console.error(`❌ Error creating table ${tableName}:`, error);
-    }
-}
-
-// Delete records from PostgreSQL if they don't exist in Access
-async function deleteMissingRecords(pgClient, tableName, accessRecords) {
-    if (accessRecords.length === 0) return;
-
-    const primaryKey = `"${normalizeColumnName(Object.keys(accessRecords[0])[0])}"`;
-    const accessIds = accessRecords.map(record => `'${record[Object.keys(record)[0]].toString().replace(/'/g, "''")}'`).join(", ");
-
-    try {
-        const deleteQuery = `DELETE FROM "${tableName}" WHERE ${primaryKey} NOT IN (${accessIds});`;
-        await pgClient.query(deleteQuery);
-        console.log(`🗑 Deleted records from ${tableName} that are not in Access`);
-    } catch (error) {
-        console.error(`❌ Error deleting records from ${tableName}:`, error);
     }
 }
 
@@ -122,7 +108,6 @@ async function migrateTable(accessDb, pgClient, tableName) {
     const records = await fetchDataFromAccess(accessDb, tableName);
     if (records.length > 0) {
         await ensurePostgresTable(pgClient, tableName, records[0]);
-        await deleteMissingRecords(pgClient, tableName, records);  // DELETE MISSING RECORDS FIRST
         await insertDataIntoPostgres(pgClient, tableName, records);
     }
 }
@@ -167,10 +152,9 @@ app.post("/api/migrate", async (req, res) => {
 });
 
 // Scheduler
-let schedulerRunning = false;
 async function scheduleMigration(accessDbPath, pgConfig) {
     cron.schedule("*/5 * * * *", async () => {
-        console.log("⏳ Running scheduled migration...");
+        console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
 
         const pgClient = await connectPostgres(pgConfig);
         if (!pgClient) return;
@@ -181,19 +165,15 @@ async function scheduleMigration(accessDbPath, pgConfig) {
             return;
         }
 
-        try {
-            const tablesResult = await accessDb.tables(null, null, null, "TABLE");
-            const tables = tablesResult.map(row => row.TABLE_NAME);
+        const tablesResult = await accessDb.tables(null, null, null, "TABLE");
+        const tables = tablesResult.map(row => row.TABLE_NAME);
 
-            for (const table of tables) {
-                await migrateTable(accessDb, pgClient, table);
-            }
-        } catch (error) {
-            console.error("❌ Error during scheduled migration:", error);
-        } finally {
-            await accessDb.close();
-            await pgClient.end();
+        for (const table of tables) {
+            await migrateTable(accessDb, pgClient, table);
         }
+
+        await accessDb.close();
+        await pgClient.end();
     });
 
     console.log("🔄 Migration Scheduler Started: Running every 5 minutes...");
