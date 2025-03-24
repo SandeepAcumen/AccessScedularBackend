@@ -9,18 +9,16 @@ const cors = require("cors");
 const path = require("path");
 const moment = require("moment");
 const { Server } = require("socket.io");
+
 const app = express();
 const PORT = process.env.APP_PORT || 3600;
 let schedulerRunning = false;
 
-app.set('port', PORT);
-
+app.set("port", PORT);
 const server = require("http").createServer(app);
 const io = new Server(server, {
-    path: '/socket.io',
-    cors: {
-        origin: "*",
-    },
+    path: "/socket.io",
+    cors: { origin: "*" },
 });
 
 // Middleware
@@ -29,34 +27,30 @@ app.use(helmet());
 app.use(compression());
 app.use(bodyParser.json());
 
-
 let users = {};
 
-io.on('connection', (socket) => {
-    console.log(`⚡: ${socket.id} user started!`);
-    socket.on('connected', function (userId) {
-        console.log('user connected', userId);
-        users[userId] = socket.id
-    });
-    socket.on('disconnect', function () {
-        console.log('user ended');
-    });
-})
+// Track previous record counts to detect updates
+let previousCounts = {};
 
-function broadcastToAll(event, data) {
-    for (let userId of Object.keys(users)) {
-        io.to(users[userId]).emit(event, data);
-    }
-}
+// Socket.io connection handling
+io.on("connection", (socket) => {
+    console.log(`⚡: ${socket.id} user connected!`);
 
+    socket.on("connected", function (userId) {
+        console.log("User connected:", userId);
+        users[userId] = socket.id;
+    });
+
+    socket.on("disconnect", function () {
+        console.log("User disconnected");
+    });
+});
 
 // Serve Frontend
 app.use(express.static(path.join(__dirname, "../microsoft-access-migrate/build")));
-
 app.get("*", (req, res) => {
     res.sendFile(path.join(__dirname, "../microsoft-access-migrate/build", "index.html"));
 });
-
 
 // PostgreSQL Connection
 async function connectPostgres(pgConfig) {
@@ -64,8 +58,7 @@ async function connectPostgres(pgConfig) {
     try {
         await pgClient.connect();
         console.log("✅ Connected to PostgreSQL");
-        io.emit('updated-status', "Connected to PostgreSQL");
-        //add socket
+        io.emit("updated-status", "Connected to PostgreSQL");
         return pgClient;
     } catch (error) {
         console.error("❌ PostgreSQL Connection Error:", error);
@@ -79,9 +72,7 @@ async function connectAccess(accessDbPath) {
         const accessConnectionString = `DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=${accessDbPath};`;
         const accessDb = await odbc.connect(accessConnectionString);
         console.log("✅ Connected to Access Database");
-        io.emit('updated-status', "Connected to Access Database");
-
-        //add socket
+        io.emit("updated-status", "Connected to Access Database");
         return accessDb;
     } catch (error) {
         console.error("❌ Access Connection Error:", error);
@@ -94,13 +85,10 @@ async function fetchDataFromAccess(accessDb, tableName) {
     try {
         const result = await accessDb.query(`SELECT * FROM ${tableName}`);
         console.log(`📊 Found ${result.length} records in ${tableName}`);
-        io.emit('updated-status', `📊 Found ${result.length} records in ${tableName}`);
-        //add socket
-
+        io.emit("updated-status", `📊 Found ${result.length} records in ${tableName}`);
         return result;
     } catch (error) {
         console.error(`❌ Error fetching data from ${tableName}:`, error);
-        //add socket
         return [];
     }
 }
@@ -119,11 +107,9 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
     try {
         await pgClient.query(createTableQuery);
         console.log(`✅ Table "${tableName}" ensured in PostgreSQL`);
-        io.emit('updated-status', `✅ Table "${tableName}" ensured in PostgreSQL`);
-        //add socket
+        io.emit("updated-status", `✅ Table "${tableName}" ensured in PostgreSQL`);
     } catch (error) {
         console.error(`❌ Error creating table ${tableName}:`, error);
-        //add socket
     }
 }
 
@@ -141,18 +127,24 @@ async function insertDataIntoPostgres(pgClient, tableName, records) {
                 SET ${columns.split(", ").map(col => `${col} = EXCLUDED.${col}`).join(", ")}`;
             await pgClient.query(insertQuery);
         }
-        io.emit('updated-status', `✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
+        io.emit("updated-status", `✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
         console.log(`✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
-        //add socket
     } catch (error) {
         console.error(`❌ Error inserting data into ${tableName}:`, error);
-        //add socket
     }
 }
 
 // Migrate Table from Access to PostgreSQL
 async function migrateTable(accessDb, pgClient, tableName) {
     const records = await fetchDataFromAccess(accessDb, tableName);
+
+    if (previousCounts[tableName] === records.length) {
+        console.log(`ℹ️ No changes detected in ${tableName}. Skipping migration.`);
+        return;
+    }
+
+    previousCounts[tableName] = records.length;
+
     if (records.length > 0) {
         await ensurePostgresTable(pgClient, tableName, records[0]);
         await insertDataIntoPostgres(pgClient, tableName, records);
@@ -191,7 +183,7 @@ app.post("/api/migrate", async (req, res) => {
             scheduleMigration(accessDbPath, pgConfig);
         }
 
-        return res.status(200).json({ message: "✅ Data Migration Completed!", });
+        return res.status(200).json({ message: "✅ Data Migration Completed!" });
     } catch (error) {
         console.error("❌ Migration Error:", error);
         return res.status(500).json({ message: "Something went wrong", error });
@@ -202,7 +194,7 @@ app.post("/api/migrate", async (req, res) => {
 async function scheduleMigration(accessDbPath, pgConfig) {
     cron.schedule("*/1 * * * *", async () => {
         console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
-        io.emit('updated-status', `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
+        io.emit("updated-status", `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
 
         const pgClient = await connectPostgres(pgConfig);
         if (!pgClient) return;
@@ -224,14 +216,8 @@ async function scheduleMigration(accessDbPath, pgConfig) {
         await pgClient.end();
     });
 
-    console.log("🔄 Migration Scheduler Started: Running every 5 minutes...");
+    console.log("🔄 Migration Scheduler Started...");
 }
-
-app.get("/api/migration-status", (req, res) => {
-    console.log(migrationStatus, "migrationStatus");
-
-    return res.json(migrationStatus);
-});
 
 server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);

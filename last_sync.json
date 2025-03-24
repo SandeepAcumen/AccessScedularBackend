@@ -1,0 +1,26 @@
+{
+  "Customers": {
+    "count": 34,
+    "lastUpdated": "2025-03-24T14:59:59+05:30"
+  },
+  "Orders": {
+    "count": 29,
+    "lastUpdated": "2025-03-24T15:00:07+05:30"
+  },
+  "Payments": {
+    "count": 26,
+    "lastUpdated": "2025-03-24T15:00:14+05:30"
+  },
+  "Products": {
+    "count": 16,
+    "lastUpdated": "2025-03-24T15:00:18+05:30"
+  },
+  "Shipments": {
+    "count": 15,
+    "lastUpdated": "2025-03-24T15:00:22+05:30"
+  },
+  "Suppliers": {
+    "count": 20,
+    "lastUpdated": "2025-03-24T15:00:27+05:30"
+  }
+}
