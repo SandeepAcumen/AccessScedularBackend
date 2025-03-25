@@ -226,6 +226,7 @@ app.post('/api/stop-scheduler', async (req, res) => {
             cronJob.stop();
             cronJob = null;
             schedulerRunning = false;
+            previousCounts = {};
             return res.status(200).json({ message: "✅ Sheduler stopped!" });
         } else {
             return res.status(200).json({ message: "✅No Sheduler is running!" });
