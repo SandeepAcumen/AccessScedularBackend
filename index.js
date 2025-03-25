@@ -194,7 +194,7 @@ app.post("/api/migrate", async (req, res) => {
 
 // Scheduler
 async function scheduleMigration(accessDbPath, pgConfig) {
-    cronJob = cron.schedule("*/1 * * * *", async () => {
+    cronJob = cron.schedule("*/5 * * * *", async () => {
         console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
         io.emit("updated-status", `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
 
@@ -217,7 +217,7 @@ async function scheduleMigration(accessDbPath, pgConfig) {
         await accessDb.close();
         await pgClient.end();
     });
-    console.log("🔄 Migration Scheduler Started...", cronJob);
+    console.log("🔄 Migration Scheduler Started...");
 }
 
 app.post('/api/stop-scheduler', async (req, res) => {
