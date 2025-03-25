@@ -85,8 +85,8 @@ async function connectAccess(accessDbPath) {
 async function fetchDataFromAccess(accessDb, tableName) {
     try {
         const result = await accessDb.query(`SELECT * FROM ${tableName}`);
-        console.log(`📊 Found ${result.length} records in ${tableName}`);
-        io.emit("updated-status", `📊 Found ${result.length} records in ${tableName}`);
+        console.log(`Access DB-📊  Found ${result.length} records in ${tableName}`);
+        io.emit("updated-status", `Access DB -📊 Found ${result.length} records in ${tableName}`);
         return result;
     } catch (error) {
         console.error(`❌ Error fetching data from ${tableName}:`, error);
@@ -107,8 +107,8 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
 
     try {
         await pgClient.query(createTableQuery);
-        console.log(`✅ Table "${tableName}" ensured in PostgreSQL`);
-        io.emit("updated-status", `✅ Table "${tableName}" ensured in PostgreSQL`);
+        console.log(`✅ Table ${tableName} ensured in PostgreSQL`);
+        io.emit("updated-status", `✅ Table ${tableName} ensured in PostgreSQL`);
     } catch (error) {
         console.error(`❌ Error creating table ${tableName}:`, error);
     }
@@ -194,7 +194,7 @@ app.post("/api/migrate", async (req, res) => {
 
 // Scheduler
 async function scheduleMigration(accessDbPath, pgConfig) {
-    cronJob = cron.schedule("*/5 * * * *", async () => {
+    cronJob = cron.schedule("*/1 * * * *", async () => {
         console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
         io.emit("updated-status", `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
 
