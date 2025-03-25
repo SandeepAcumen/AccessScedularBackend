@@ -13,6 +13,7 @@ const { Server } = require("socket.io");
 const app = express();
 const PORT = process.env.APP_PORT || 3600;
 let schedulerRunning = false;
+let cronJob = null;
 
 app.set("port", PORT);
 const server = require("http").createServer(app);
@@ -181,6 +182,7 @@ app.post("/api/migrate", async (req, res) => {
         if (!schedulerRunning) {
             schedulerRunning = true;
             scheduleMigration(accessDbPath, pgConfig);
+            io.emit("updated-status", `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
         }
 
         return res.status(200).json({ message: "✅ Data Migration Completed!" });
@@ -192,7 +194,7 @@ app.post("/api/migrate", async (req, res) => {
 
 // Scheduler
 async function scheduleMigration(accessDbPath, pgConfig) {
-    cron.schedule("*/1 * * * *", async () => {
+    cronJob = cron.schedule("*/1 * * * *", async () => {
         console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
         io.emit("updated-status", `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
 
@@ -215,9 +217,24 @@ async function scheduleMigration(accessDbPath, pgConfig) {
         await accessDb.close();
         await pgClient.end();
     });
-
-    console.log("🔄 Migration Scheduler Started...");
+    console.log("🔄 Migration Scheduler Started...", cronJob);
 }
+
+app.post('/api/stop-scheduler', async (req, res) => {
+    try {
+        if (cronJob) {
+            cronJob.stop();
+            cronJob = null;
+            schedulerRunning = false;
+            return res.status(200).json({ message: "✅ Sheduler stopped!" });
+        } else {
+            return res.status(200).json({ message: "✅No Sheduler is running!" });
+        }
+    } catch (error) {
+        console.error("❌ Scheduler Error:", error);
+        return res.status(500).json({ message: "Something went wrong", error });
+    }
+})
 
 server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
