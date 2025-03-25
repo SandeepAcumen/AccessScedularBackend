@@ -29,19 +29,15 @@ app.use(compression());
 app.use(bodyParser.json());
 
 let users = {};
-
-// Track previous record counts to detect updates
-let previousCounts = {};
+let previousStates = {}; // Track previous record states
 
 // Socket.io connection handling
 io.on("connection", (socket) => {
     console.log(`⚡: ${socket.id} user connected!`);
-
     socket.on("connected", function (userId) {
         console.log("User connected:", userId);
         users[userId] = socket.id;
     });
-
     socket.on("disconnect", function () {
         console.log("User disconnected");
     });
@@ -85,8 +81,6 @@ async function connectAccess(accessDbPath) {
 async function fetchDataFromAccess(accessDb, tableName) {
     try {
         const result = await accessDb.query(`SELECT * FROM ${tableName}`);
-        console.log(`Access DB-📊  Found ${result.length} records in ${tableName}`);
-        io.emit("updated-status", `Access DB -📊 Found ${result.length} records in ${tableName}`);
         return result;
     } catch (error) {
         console.error(`❌ Error fetching data from ${tableName}:`, error);
@@ -107,49 +101,83 @@ async function ensurePostgresTable(pgClient, tableName, sampleRecord) {
 
     try {
         await pgClient.query(createTableQuery);
-        console.log(`✅ Table ${tableName} ensured in PostgreSQL`);
-        io.emit("updated-status", `✅ Table ${tableName} ensured in PostgreSQL`);
     } catch (error) {
         console.error(`❌ Error creating table ${tableName}:`, error);
     }
 }
 
-// Insert or Update Data into PostgreSQL
-async function insertDataIntoPostgres(pgClient, tableName, records) {
-    if (records.length === 0) return;
-    const columns = Object.keys(records[0]).map(col => `"${normalizeColumnName(col)}"`).join(", ");
-    const primaryKey = `"${normalizeColumnName(Object.keys(records[0])[0])}"`;
+// Sync Data Between Access and PostgreSQL
+async function syncDataWithPostgres(pgClient, tableName, currentRecords) {
+    if (currentRecords.length === 0) return;
+
+    const columns = Object.keys(currentRecords[0]).map(col => `"${normalizeColumnName(col)}"`).join(", ");
+    const primaryKey = `"${normalizeColumnName(Object.keys(currentRecords[0])[0])}"`;
+
+    const changeLog = { inserts: 0, updates: 0, deletions: 0 }; // Track changes
 
     try {
-        for (const record of records) {
+        const previousRecords = previousStates[tableName] || [];
+        const previousKeys = new Map(previousRecords.map(rec => [rec[Object.keys(currentRecords[0])[0]], rec]));
+
+        // Determine deletions
+        const currentKeys = new Set(currentRecords.map(rec => rec[Object.keys(currentRecords[0])[0]]));
+        const recordsToDelete = previousRecords.filter(rec => !currentKeys.has(rec[Object.keys(currentRecords[0])[0]]));
+        changeLog.deletions = recordsToDelete.length;
+
+        for (const record of recordsToDelete) {
+            const deleteQuery = `DELETE FROM "${tableName}" WHERE ${primaryKey} = '${record[Object.keys(currentRecords[0])[0]]}'`;
+            await pgClient.query(deleteQuery);
+        }
+
+        // Process inserts and updates
+        for (const record of currentRecords) {
             const values = Object.values(record).map(value => value ? `'${value.toString().replace(/'/g, "''")}'` : "NULL").join(", ");
-            const insertQuery = `INSERT INTO "${tableName}" (${columns}) VALUES (${values})
+            const upsertQuery = `INSERT INTO "${tableName}" (${columns}) VALUES (${values})
                 ON CONFLICT (${primaryKey}) DO UPDATE 
                 SET ${columns.split(", ").map(col => `${col} = EXCLUDED.${col}`).join(", ")}`;
-            await pgClient.query(insertQuery);
+
+            if (previousKeys.has(record[Object.keys(record)[0]])) {
+                changeLog.updates += 1; // Count as an update
+            } else {
+                changeLog.inserts += 1; // Count as an insert
+            }
+
+            await pgClient.query(upsertQuery);
         }
-        io.emit("updated-status", `✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
-        console.log(`✅ Successfully inserted/updated ${records.length} records into ${tableName}`);
+
+        previousStates[tableName] = currentRecords; // Update state for next run
+
+        // Emit changes
+        if (changeLog.inserts > 0 || changeLog.updates > 0 || changeLog.deletions > 0) {
+            io.emit(
+                "updated-status",
+                `📊 Table: ${tableName} — Inserts: ${changeLog.inserts}, Updates: ${changeLog.updates}, Deletions: ${changeLog.deletions}`
+            );
+        }
     } catch (error) {
-        console.error(`❌ Error inserting data into ${tableName}:`, error);
+        console.error(`❌ Error syncing data with ${tableName}:`, error);
     }
 }
 
 // Migrate Table from Access to PostgreSQL
 async function migrateTable(accessDb, pgClient, tableName) {
-    const records = await fetchDataFromAccess(accessDb, tableName);
+    const currentRecords = await fetchDataFromAccess(accessDb, tableName);
 
-    if (previousCounts[tableName] === records.length) {
-        console.log(`ℹ️ No changes detected in ${tableName}. Skipping migration.`);
-        return;
+    const previousRecords = previousStates[tableName] || [];
+    const hasChanges =
+        currentRecords.length !== previousRecords.length ||
+        JSON.stringify(currentRecords) !== JSON.stringify(previousRecords);
+
+    if (hasChanges) {
+        console.log(`📊 Found ${currentRecords.length} records in ${tableName}`);
+        await ensurePostgresTable(pgClient, tableName, currentRecords[0]);
+        await syncDataWithPostgres(pgClient, tableName, currentRecords);
+        console.log(`✅ Synchronized ${currentRecords.length} records with ${tableName}`);
+    } else {
+        console.log(`ℹ️ No changes detected in ${tableName}`);
     }
 
-    previousCounts[tableName] = records.length;
-
-    if (records.length > 0) {
-        await ensurePostgresTable(pgClient, tableName, records[0]);
-        await insertDataIntoPostgres(pgClient, tableName, records);
-    }
+    previousStates[tableName] = currentRecords;
 }
 
 // API Endpoint to Trigger Migration Manually
@@ -158,11 +186,6 @@ app.post("/api/migrate", async (req, res) => {
         const { accessDbPath, user, host, database, password, port = 5432 } = req.body;
         const pgConfig = { user, host, database, password, port };
 
-        if (!accessDbPath || !pgConfig) {
-            return res.status(400).json({ message: "❌ Missing required parameters." });
-        }
-
-        console.log("📢 Received migration request...");
         const pgClient = await connectPostgres(pgConfig);
         if (!pgClient) return res.status(500).json({ message: "❌ Failed to connect to PostgreSQL" });
 
@@ -182,7 +205,6 @@ app.post("/api/migrate", async (req, res) => {
         if (!schedulerRunning) {
             schedulerRunning = true;
             scheduleMigration(accessDbPath, pgConfig);
-            io.emit("updated-status", `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
         }
 
         return res.status(200).json({ message: "✅ Data Migration Completed!" });
@@ -195,8 +217,9 @@ app.post("/api/migrate", async (req, res) => {
 // Scheduler
 async function scheduleMigration(accessDbPath, pgConfig) {
     cronJob = cron.schedule("*/1 * * * *", async () => {
-        console.log(`⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
-        io.emit("updated-status", `⏳ Running scheduled migration at ${moment().format("YYYY-MM-DD HH:mm:ss")}`);
+        const timestamp = moment().format("YYYY-MM-DD HH:mm:ss");
+        console.log(`⏳ Running scheduled migration at ${timestamp}`);
+        io.emit("updated-status", `⏳ Running scheduled migration at ${timestamp}`);
 
         const pgClient = await connectPostgres(pgConfig);
         if (!pgClient) return;
@@ -216,27 +239,35 @@ async function scheduleMigration(accessDbPath, pgConfig) {
 
         await accessDb.close();
         await pgClient.end();
+
+        console.log(`✅ Scheduled migration completed at ${timestamp}`);
+        io.emit("updated-status", `✅ Scheduled migration completed at ${timestamp}`);
     });
-    console.log("🔄 Migration Scheduler Started...");
+
+    console.log("🔄 Migration scheduler started...");
 }
 
-app.post('/api/stop-scheduler', async (req, res) => {
+// API Endpoint to Stop the Scheduler
+app.post("/api/stop-scheduler", async (req, res) => {
     try {
         if (cronJob) {
             cronJob.stop();
             cronJob = null;
             schedulerRunning = false;
-            previousCounts = {};
-            return res.status(200).json({ message: "✅ Sheduler stopped!" });
+            previousStates = {}; // Clear previous states
+            console.log("✅ Scheduler stopped!");
+            return res.status(200).json({ message: "✅ Scheduler stopped!" });
         } else {
-            return res.status(200).json({ message: "✅No Sheduler is running!" });
+            console.log("✅ No scheduler is running!");
+            return res.status(200).json({ message: "✅ No scheduler is running!" });
         }
     } catch (error) {
-        console.error("❌ Scheduler Error:", error);
+        console.error("❌ Error stopping scheduler:", error);
         return res.status(500).json({ message: "Something went wrong", error });
     }
-})
+});
 
+// Start Server
 server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
