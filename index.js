@@ -79,6 +79,11 @@ async function connectAccess(accessDbPath) {
 
 // Fetch Data from Access Table
 async function fetchDataFromAccess(accessDb, tableName) {
+    if (tableName.startsWith("~")) {
+        console.log(`ℹ️ Skipping temporary table: ${tableName}`);
+        return []; // Skip processing
+    }
+
     try {
         const result = await accessDb.query(`SELECT * FROM ${tableName}`);
         return result;
@@ -87,6 +92,7 @@ async function fetchDataFromAccess(accessDb, tableName) {
         return [];
     }
 }
+
 
 // Normalize column names
 function normalizeColumnName(column) {
@@ -273,3 +279,4 @@ server.listen(PORT, () => {
 });
 
 //end
+
