@@ -93,7 +93,6 @@ async function fetchDataFromAccess(accessDb, tableName) {
     }
 }
 
-
 // Normalize column names
 function normalizeColumnName(column) {
     return column.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "");
@@ -143,12 +142,24 @@ async function syncDataWithPostgres(pgClient, tableName, currentRecords) {
                 SET ${columns.split(", ").map(col => `${col} = EXCLUDED.${col}`).join(", ")}`;
 
             if (previousKeys.has(record[Object.keys(record)[0]])) {
-                changeLog.updates += 1; // Count as an update
-            } else {
-                changeLog.inserts += 1; // Count as an insert
-            }
+                // Check if any values have changed
+                const previousRecord = previousKeys.get(record[Object.keys(record)[0]]);
+                let hasChanged = false;
+                for (const key in record) {
+                    if (record[key] !== previousRecord[key]) {
+                        hasChanged = true;
+                        break; // Exit loop if any change is found
+                    }
+                }
 
-            await pgClient.query(upsertQuery);
+                if (hasChanged) {
+                    changeLog.updates += 1;
+                    await pgClient.query(upsertQuery);
+                }
+            } else {
+                changeLog.inserts += 1;
+                await pgClient.query(upsertQuery);
+            }
         }
 
         previousStates[tableName] = currentRecords; // Update state for next run
@@ -246,8 +257,8 @@ async function scheduleMigration(accessDbPath, pgConfig) {
         await accessDb.close();
         await pgClient.end();
 
-        console.log(`✅ Scheduled migration completed at ${timestamp}`);
-        io.emit("updated-status", `✅ Scheduled migration completed at ${timestamp}`);
+        console.log(`✅ Scheduled Synchronization completed at ${timestamp}`);
+        io.emit("updated-status", `✅ Scheduled Synchronization completed at ${timestamp}`);
     });
 
     console.log("🔄 Migration scheduler started...");
@@ -277,6 +288,3 @@ app.post("/api/stop-scheduler", async (req, res) => {
 server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
-
-//end
-
